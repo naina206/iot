@@ -1,0 +1,117 @@
+#include <SoftwareSerial.h>
+//#include <DHT.h>
+
+//#define DHTPIN 5       // Digital pin for DHT11 sensor
+//#define DHTTYPE DHT11   // DHT sensor type, change to DHT22 if you're using that model
+
+#define RX 11             // TX of esp8266 is connected with Arduino pin 4
+#define TX 12             // RX of esp8266 is connected with Arduino pin 5
+
+
+
+String WIFI_SSID = "MJ";        // WIFI NAME
+String WIFI_PASS = "12345678mj"; // WIFI PASSWORD
+String API = "4QNN2T2LNV3DJFBS"; // Write API KEY
+String HOST = "api.thingspeak.com";
+String PORT = "80";
+
+//DHT dht(DHTPIN, DHTTYPE);
+const int mq135Pin = A0;  // Analog pin for MQ135 sensor
+const int mq7Pin = A1;    // Analog pin for MQ7 sensor
+const int mq131Pin = A2;  // Analog pin for MQ131 ozone sensor
+
+boolean found = false;
+SoftwareSerial esp8266(RX, TX);
+
+void setup() {
+  Serial.begin(9600);
+  //dht.begin();
+  esp8266.begin(115200);
+  delay(1000); // Wait for ESP8266 module to initialize
+  sendCommand("AT", 5, "OK");
+  sendCommand("AT+CWMODE=1", 5, "OK");
+  sendCommand("AT+CWJAP=\"" + WIFI_SSID + "\",\"" + WIFI_PASS + "\"", 20, "OK");
+}
+
+void loop() {
+  // Read sensor values
+  float humidity=65;
+  float temperature=35;
+  float co2 = readMQSensor(mq135Pin, 2.5, 0.25);
+  float methane = readMQSensor(mq135Pin, 4.0, 1.8);
+  float no2 = readMQSensor(mq135Pin, 5.0, 1.5);
+  float co = map(analogRead(mq7Pin), 0, 1023, 0, 100);
+  float so2 = map(analogRead(mq7Pin), 0, 1023, 0, 100);
+ // float humidity = dht.readHumidity();
+  //float temperature = dht.readTemperature();
+  float ozone = map(analogRead(mq131Pin), 0, 1023, 0, 100);
+
+  // Construct GET request
+  String getData = "GET /update?api_key=" + API +
+                   "&field1=" + String(co2) +
+                   "&field2=" + String(methane) +
+                   "&field3=" + String(no2) +
+                   "&field4=" + String(co) +
+                   "&field5=" + String(so2) +
+                   "&field6=" + String(temperature) +
+                   "&field7=" + String(humidity) +
+                   "&field8=" + String(ozone);
+
+  sendCommand("AT+CIPMUX=1", 5, "OK");
+  sendCommand("AT+CIPSTART=0,\"TCP\",\"" + HOST + "\"," + PORT, 15, "OK");
+  delay(5000);  // Delay after opening TCP connection
+
+  sendCommand("AT+CIPSEND=0," + String(getData.length() + 4), 10, ">");
+  esp8266.println(getData);
+  delay(5000);
+
+  sendCommand("AT+CIPCLOSE=0", 10, "OK");
+
+  // Print Sensor Readings
+  Serial.print("CO2: "); Serial.print(co2); Serial.println(" ppm\t");
+  Serial.print("Methane: "); Serial.print(methane); Serial.println(" ppm\t");
+  Serial.print("NO2: "); Serial.print(no2); Serial.println(" ppm\t");
+  Serial.print("CO: "); Serial.print(co); Serial.println(" ppm\t");
+  Serial.print("SO2: "); Serial.print(so2); Serial.println(" ppm\t");
+  Serial.print("Temperature: "); Serial.print(temperature); Serial.println(" °C\t");
+  Serial.print("Humidity: "); Serial.print(humidity); Serial.println(" %\t");
+  Serial.print("Ozone: "); Serial.print(ozone); Serial.println(" ppm\t");
+}
+
+float readMQSensor(int pin, float m, float b) {
+  int value = analogRead(pin);
+  float voltage = value * (5.0 / 1023.0);
+  return 100 * (m * voltage - b);
+}
+
+void sendCommand(String command, int maxTime, char readReplay[]) {
+  int countTrueCommand = 0;
+  int countTimeCommand = 0;
+  
+  Serial.print(countTrueCommand);
+  Serial.print(". at command => ");
+  Serial.print(command);
+  Serial.print(" ");
+
+  while (countTimeCommand < maxTime * 1) {
+    esp8266.println(command);
+    if (esp8266.find(readReplay)) {
+      found = true;
+      break;
+    }
+    countTimeCommand++;
+    delay(1000); // Delay to allow time for ESP8266 response
+  }
+
+  if (found) {
+    Serial.println("OK");
+    countTrueCommand++;
+    countTimeCommand = 0;
+  } else {
+    Serial.println("Fail");
+    countTrueCommand = 0;
+    countTimeCommand = 0;
+  }
+
+  found = false;
+}
